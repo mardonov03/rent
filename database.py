@@ -43,7 +43,7 @@ async def init_db(pool):
                     patronymic TEXT,
                     username TEXT UNIQUE,
                     password TEXT,
-                    gmail TEXT,
+                    gmail TEXT UNIQUE,
                     passportid INTEGER UNIQUE,
                     age INTEGER,
                     photo BYTEA,
@@ -61,7 +61,8 @@ async def init_db(pool):
                     gmail TEXT,
                     passportid INTEGER UNIQUE,
                     age INTEGER,
-                    photo BYTEA
+                    photo BYTEA,
+                    role TEXT
                 )
             """)
     except Exception as e:
