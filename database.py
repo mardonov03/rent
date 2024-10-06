@@ -25,13 +25,15 @@ async def init_db(pool):
         async with pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS cars (
-                    carid BIGINT PRIMARY KEY,
+                    carid BIGSERIAL PRIMARY KEY,
                     carname TEXT,
                     year INTEGER,
                     color TEXT,
                     number BIGINT UNIQUE,
-                    status BOOLEAN DEFAULT FALSE, -- Хози рентга берворилган ёки ек
+                    status_bron BOOLEAN DEFAULT FALSE, -- Хози брон кб койлган ёки ек
+                    status_taken BOOLEAN DEFAULT FALSE, -- Хози рентга берворилган ёки ек
                     olindi TIMESTAMP,
+                    price INTEGER,
                     kelishi_kerak TIMESTAMP
                 )
             """)
@@ -47,6 +49,13 @@ async def init_db(pool):
                     passportid INTEGER UNIQUE,
                     age INTEGER,
                     photo BYTEA,
+                    token TEXT UNIQUE,
+                    gmailcode TEXT,
+                    count INTEGER DEFAULT 0,
+                    countdaily INTEGER DEFAULT 0,
+                    time TIMESTAMP, --кунли лимитти бошкаришчун
+                    statuscode BOOLEAN DEFAULT FALSE, --бу код боргандан кейн почтани тасдиклаган ёки еклиги
+                    account_status BOOLEAN DEFAULT FALSE, --аккаунти gmail код тасдиклагандан кейин актив клинади охрги етап бу
                     carid BIGINT REFERENCES cars(carid)
                 )
             """)
@@ -67,3 +76,10 @@ async def init_db(pool):
             """)
     except Exception as e:
         logger.error(f'init_db error: {e}')
+
+async def main():
+    pool = await create_pool()
+    await init_db(pool)
+
+if __name__ == "__main__":
+    asyncio.run(main())
