@@ -56,6 +56,7 @@ async def init_db(pool):
                     time TIMESTAMP, --кунли лимитти бошкаришчун
                     statuscode BOOLEAN DEFAULT FALSE, --бу код боргандан кейн почтани тасдиклаган ёки еклиги
                     account_status BOOLEAN DEFAULT FALSE, --аккаунти gmail код тасдиклагандан кейин актив клинади охрги етап бу
+                    time_for_verificy_code TIMESTAMP, --верификация коди бориб тушканда койладган вохт
                     carid BIGINT REFERENCES cars(carid)
                 )
             """)

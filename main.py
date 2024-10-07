@@ -125,9 +125,10 @@ async def register_user(user: UserCreate):
         async with pool.acquire() as conn:
             user_gmail = await conn.fetchrow('SELECT gmail, account_status, statuscode FROM users WHERE gmail=$1', user.gmail)
 
-            if user_gmail and user_gmail['account_status']:
+            if user_gmail and user_gmail['account_status'] == True:
                 raise HTTPException(status_code=409, detail='Этот Gmail уже зарегистрирован. Перенаправляем на страницу входа.')
-            elif user_gmail and user_gmail['statuscode']:
+
+            elif user_gmail and user_gmail['statuscode'] == True:
                 hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt(rounds=12))
                 token_refresh = await create_refresh_token(user.username)
                 await conn.execute('UPDATE users SET username= $1, password= $2, token = $3, account_status = TRUE WHERE gmail = $4', user.username, hashed_password.decode('utf-8'), token_refresh.decode('utf-8'),user.gmail)
@@ -151,14 +152,10 @@ async def gmailcode(gmail):
                 subtype="html",
             )
             fm = FastMail(conf)
-            try:
-                await fm.send_message(message)
-            except Exception as e:
-                logger.error(f'Error sending email: {e}')
-                raise HTTPException(status_code=500, detail='Ошибка при отправке письма.')
+            await fm.send_message(message)
 
             hashcode = bcrypt.hashpw(code.encode('utf-8'), bcrypt.gensalt(rounds=12))
-            await conn.execute('INSERT INTO users (gmail, gmailcode) VALUES ($1, $2)', gmail, hashcode.decode('utf-8'))
+            await conn.execute('INSERT INTO users (gmail, gmailcode, time_for_verificy_code) VALUES ($1, $2, $3)', gmail, hashcode.decode('utf-8'), datetime.now())
             return gmail
     except Exception as e:
         logger.error(f'error3242637899: {e}')
@@ -168,24 +165,27 @@ async def verify_gmail(ver: ForverifyGmail):
     pool = await create_pool()
     try:
         async with pool.acquire() as conn:
-            status = await conn.fetchrow('SELECT account_status, gmailcode, countdaily, count, time FROM users WHERE gmail = $1', ver.gmail)
+            status = await conn.fetchrow('SELECT account_status, gmailcode, countdaily, count, time, time_for_verificy_code FROM users WHERE gmail = $1', ver.gmail)
             if not status:
                 raise HTTPException(status_code=404, detail='Пользователь не найден.')
 
-            if status['account_status']:
+            if status['account_status'] == True:
                 raise HTTPException(status_code=409, detail='Этот Gmail уже зарегистрирован. Перенаправляем на страницу входа.')
 
+            if status['time'] < datetime.now() - timedelta(hours=24):
+                await conn.execute('UPDATE users SET count = 0, countdaily = 0 WHERE gmail=$1', ver.gmail)
+
             if status['countdaily'] >= 3:
-                if status['time'] < datetime.now() - timedelta(hours=24):
-                    await conn.execute('UPDATE users SET count = 0, countdaily = 0 WHERE gmail=$1',ver.gmail)
-                else:
-                    raise HTTPException(status_code=400, detail='Вы достигли своего лимита.')
+                raise HTTPException(status_code=400, detail='Вы достигли своего лимита.')
+
+            if status['time_for_verificy_code'] < datetime.now() - timedelta(minutes=3):
+                raise HTTPException(status_code=402, detail='Срок действия кода истек')
 
             if bcrypt.checkpw(ver.code.encode('utf-8'), status['gmailcode'].encode('utf-8')):
-                await conn.execute('UPDATE users SET statuscode = TRUE, count = 0 WHERE gmail = $1', ver.gmail)
+                await conn.execute('UPDATE users SET statuscode = TRUE, count = 0, countdaily=0, time= null, time_for_verificy_code=null WHERE gmail = $1', ver.gmail)
                 return {"detail": "Успешно подтверждено. Перенаправляем на страницу входа."}
             else:
-                await conn.execute('UPDATE users SET count = 0, countdaily = countdaily + 1 WHERE gmail=$1',ver.gmail)
+                await conn.execute('UPDATE users SET count = 0, countdaily = countdaily + 1,time =$2 WHERE gmail=$1',ver.gmail,datetime.now())
                 raise HTTPException(status_code=400, detail='Неверный код.')
 
     except Exception as e:
@@ -209,6 +209,19 @@ async def handle_login(user: UserLogin):
                 stored_password = await conn.fetchval('SELECT password FROM users WHERE gmail = $1', user.gmail)
                 userid = await conn.fetchval('SELECT userid FROM users WHERE gmail =$1', user.gmail)
 
+            status = await conn.fetchrow('SELECT account_status, countdaily, count, time, time_for_verificy_code FROM users WHERE userid = $1', user.id)
+            if not status:
+                raise HTTPException(status_code=404, detail='Пользователь с таким именем не найден')
+
+            if status['account_status'] == False:
+                raise HTTPException(status_code=409, detail='Аккаунт с таким именем не зараегестрирован')
+
+            if status['time'] < datetime.now() - timedelta(hours=24):
+                await conn.execute('UPDATE users SET count = 0, countdaily = 0 WHERE userid=$1',user.id)
+
+            if status['countdaily'] >= 3:
+                raise HTTPException(status_code=400, detail='Вы достигли своего лимита. попробуйте через 24 часа')
+
             if stored_password:
                 if bcrypt.checkpw(user.password.encode('utf-8'), stored_password.encode('utf-8')):
                     token_refresh = await create_refresh_token(user.username)
@@ -216,9 +229,8 @@ async def handle_login(user: UserLogin):
                     token = await create_jwt_token(user.username)
                     return {'token_access': token, 'token_refresh': token_refresh}
                 else:
+                    await conn.execute('UPDATE users SET countdaily = countdaily + 1, time = $2 WHERE userid = $1',user.id,datetime.now())
                     raise HTTPException(status_code=401, detail='Неверный пароль')
-            else:
-                raise HTTPException(status_code=404, detail='Пользователь с таким именем не найден')
     except Exception as e:
         logger.error(f'error5357346335: {e}')
         raise HTTPException(status_code=500, detail='Ошибка при входе')
