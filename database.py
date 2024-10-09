@@ -24,20 +24,6 @@ async def init_db(pool):
     try:
         async with pool.acquire() as conn:
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS cars (
-                    carid BIGSERIAL PRIMARY KEY,
-                    carname TEXT,
-                    year INTEGER,
-                    color TEXT,
-                    number BIGINT UNIQUE,
-                    status_bron BOOLEAN DEFAULT FALSE, -- Хози брон кб койлган ёки ек
-                    status_taken BOOLEAN DEFAULT FALSE, -- Хози рентга берворилган ёки ек
-                    olindi TIMESTAMP,
-                    price INTEGER,
-                    kelishi_kerak TIMESTAMP
-                )
-            """)
-            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS users (
                     userid SERIAL PRIMARY KEY,
                     name TEXT,
@@ -58,6 +44,20 @@ async def init_db(pool):
                     account_status BOOLEAN DEFAULT FALSE, --аккаунти gmail код тасдиклагандан кейин актив клинади охрги етап бу
                     time_for_verificy_code TIMESTAMP, --верификация коди бориб тушканда койладган вохт
                     carid BIGINT REFERENCES cars(carid)
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS cars (
+                    carid BIGSERIAL PRIMARY KEY,
+                    carname TEXT,
+                    year INTEGER,
+                    color TEXT,
+                    number TEXT UNIQUE,
+                    status_bron BOOLEAN DEFAULT FALSE, -- Хози брон кб койлган ёки ек
+                    status_taken BOOLEAN DEFAULT FALSE, -- Хози рентга берворилган ёки ек
+                    olindi TIMESTAMP,
+                    price INTEGER,
+                    kelishi_kerak TIMESTAMP
                 )
             """)
             await conn.execute("""
