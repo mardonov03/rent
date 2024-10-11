@@ -64,9 +64,7 @@ class AddCar(BaseModel):
     price: int
 
 class ForverifyGmail(BaseModel):
-    gmail: EmailStr
-    code: str
-
+    code: constr(min_length=6)
 
 @app.on_event('startup')
 async def eventstart():
@@ -88,7 +86,10 @@ async def shutdownevent():
 
 @app.get('/')
 async def main():
-    return 'hellow'
+    pool = await create_pool()
+    async with pool.acquire() as conn:
+        await conn.execute('INSERT INTO cars (carname,year,color, number) VALUES ($1,$2,$3,$4)', 'nexia',2014,'black','sadw32413')
+        return 'hellow'
 
 
 async def create_jwt_token(username: str):
@@ -162,14 +163,12 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
                 raise HTTPException(status_code=400, detail='Пожалуйста завершите настройку с того устройства, с которого подтвердили почту.')
 
             if tokenuser is not None:
-                logger.info(f"current_user: {tokenuser}")
-                logger.info(f"current_user.get('sub'): {tokenuser.get('sub')}")
                 if tokenuser.get('sub') != user.gmail:
-                    raise HTTPException(status_code=400, detail='1Пожалуйста завершите настройку с подтвержденным gmail')
+                    raise HTTPException(status_code=400, detail='Пожалуйста завершите настройку с подтвержденным gmail')
                 elif user_gmail and user_gmail['statuscode'] == True and tokenuser.get('sub') == user.gmail:
                     hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt(rounds=12))
                     token_refresh = await create_refresh_token(user.username)
-                    await conn.execute('UPDATE users SET username= $1, password= $2, token = $3, account_status = TRUE WHERE gmail = $4',user.username, hashed_password.decode('utf-8'), token_refresh.decode('utf-8'), user.gmail)
+                    await conn.execute('UPDATE users SET username= $1, password= $2, token = $3, account_status = TRUE,gmailcode= null,countdaily =0 WHERE gmail = $4',user.username, hashed_password.decode('utf-8'), token_refresh.decode('utf-8'), user.gmail)
                     token = await create_jwt_token(user.username)
                     return {'token_access': token, 'token_refresh': token_refresh}
             else:
@@ -206,11 +205,11 @@ async def gmailcode(gmail):
 
 
 @app.post('/verify/{gmail}')
-async def verify_gmail(ver: ForverifyGmail):
+async def verify_gmail(gmail: str, ver: ForverifyGmail):
     pool = await create_pool()
     try:
         async with pool.acquire() as conn:
-            status = await conn.fetchrow('SELECT account_status, gmailcode, countdaily, time, time_for_verificy_code FROM users WHERE gmail = $1', ver.gmail)
+            status = await conn.fetchrow('SELECT account_status, gmailcode, countdaily, time, time_for_verificy_code FROM users WHERE gmail = $1', gmail)
             if not status:
                 raise HTTPException(status_code=404, detail='Пользователь не найден.')
 
@@ -218,7 +217,7 @@ async def verify_gmail(ver: ForverifyGmail):
                 raise HTTPException(status_code=409, detail='Этот Gmail уже зарегистрирован. Перенаправляем на страницу входа.')
 
             if status['time'] and status['time'] < datetime.now() - timedelta(hours=24):
-                await conn.execute('UPDATE users SET countdaily = 0 WHERE gmail=$1', ver.gmail)
+                await conn.execute('UPDATE users SET countdaily = 0 WHERE gmail=$1', gmail)
 
             if status['countdaily'] >= 3:
                 raise HTTPException(status_code=400, detail='Вы достигли своего лимита.')
@@ -227,12 +226,12 @@ async def verify_gmail(ver: ForverifyGmail):
                 raise HTTPException(status_code=402, detail='Срок действия кода истек')
 
             if bcrypt.checkpw(ver.code.encode('utf-8'), status['gmailcode'].encode('utf-8')):
-                await conn.execute('UPDATE users SET statuscode = TRUE, countdaily=0, time= null, time_for_verificy_code=null WHERE gmail = $1', ver.gmail)
-                token = await create_jwt_token_gmail(ver.gmail)
+                await conn.execute('UPDATE users SET statuscode = TRUE, countdaily=0, time= null, time_for_verificy_code=null WHERE gmail = $1', gmail)
+                token = await create_jwt_token_gmail(gmail)
                 return {"detail": "Успешно подтверждено. Перенаправляем на страницу входа.",
                         "token": token}
             else:
-                await conn.execute('UPDATE users SET countdaily = countdaily + 1,time =$2 WHERE gmail=$1',ver.gmail,datetime.now())
+                await conn.execute('UPDATE users SET countdaily = countdaily + 1, time = $2 WHERE gmail=$1', gmail, datetime.now())
                 raise HTTPException(status_code=400, detail='Неверный код.')
     except HTTPException as http_err:
         raise http_err
@@ -240,6 +239,7 @@ async def verify_gmail(ver: ForverifyGmail):
     except Exception as e:
         logger.error(f'error98900385: {e}')
         raise HTTPException(status_code=500, detail='Ошибка при проверке кода.')
+
 
 
 @app.post('/login')
@@ -318,7 +318,8 @@ async def read_profile(username: str, current_user: dict = Depends(get_current_u
 
             if not user_data:
                 raise HTTPException(status_code=404, detail="Пользователь не найден")
-            if current_user is None or user_data['userid'] != current_user['sub']:
+            logger.info(f'current user: {current_user['sub']}')
+            if current_user is None or user_data['username'] != current_user['sub']:
                 return {
                     "message": "Это профиль другого пользователя",
                     "profile": {
@@ -326,7 +327,7 @@ async def read_profile(username: str, current_user: dict = Depends(get_current_u
                         "username": user_data['username'],
                     }
                 }
-            elif user_data['userid'] == current_user['sub']:
+            elif user_data['username'] == current_user['sub']:
                 return {
                     "message": "Это ваш профиль",
                     "profile": {
@@ -363,3 +364,39 @@ async def handle_car(id:int):
                 return car
     except Exception as e:
         logger.error(f'error342453: {e}')
+
+
+@app.post('/reserve/{carid}')
+async def reserve(carid: int, token: dict = Depends(get_current_user)):
+    pool = await create_pool()
+    try:
+        if token is None:
+            raise HTTPException(status_code=401,detail='Прежде чем забронировать машину, вам нужно зайти в свой аккаунт')
+
+        username = token['sub']
+        async with pool.acquire() as conn:
+            carstat = await conn.fetchrow('SELECT status_bron, status_taken FROM cars WHERE carid = $1', carid)
+            if carstat is None:
+                raise HTTPException(status_code=404, detail=f'Машина с таким id не найдена')
+            elif carstat['status_bron'] or carstat['status_taken']:
+                raise HTTPException(status_code=400, detail=f'Эта машина уже забронирована или взята')
+
+            user = await conn.fetchrow('SELECT userid, gmail, banned, bantime, carid, passportid FROM users WHERE username = $1', username)
+            if user['banned']:
+                bantime = user['bantime'] + timedelta(days=10) if user['bantime'] else None
+                raise HTTPException(status_code=403, detail=f'Вы сможете забронировать машину только после: {bantime}')
+
+            if user['carid']:
+                car = await conn.fetchrow('SELECT carname, color, number, year FROM cars WHERE carid = $1',user['carid'])
+                raise HTTPException(status_code=400,detail=f'Вы уже забронировали машину: {car["carname"]} {car["color"]} {car["number"]}, {car["year"]}')
+
+            async with conn.transaction():
+                await conn.execute('UPDATE users SET carid = $1 WHERE username = $2', carid, username)
+                await conn.execute('UPDATE cars SET status_bron = TRUE WHERE carid = $1', carid)
+                return {"message": "Машина успешно забронирована"}
+
+    except HTTPException as http_err:
+        raise http_err
+    except Exception as e:
+        logger.error(f'Произошла ошибка: {e}')
+        raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')

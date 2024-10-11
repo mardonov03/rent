@@ -24,29 +24,6 @@ async def init_db(pool):
     try:
         async with pool.acquire() as conn:
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    userid SERIAL PRIMARY KEY,
-                    name TEXT,
-                    surname TEXT,
-                    patronymic TEXT,
-                    username TEXT UNIQUE,
-                    password TEXT,
-                    gmail TEXT UNIQUE,
-                    passportid INTEGER UNIQUE,
-                    age INTEGER,
-                    photo BYTEA,
-                    token TEXT UNIQUE,
-                    gmailcode TEXT,
-                    count INTEGER DEFAULT 0,
-                    countdaily INTEGER DEFAULT 0,
-                    time TIMESTAMP, --кунли лимитти бошкаришчун
-                    statuscode BOOLEAN DEFAULT FALSE, --бу код боргандан кейн почтани тасдиклаган ёки еклиги
-                    account_status BOOLEAN DEFAULT FALSE, --аккаунти gmail код тасдиклагандан кейин актив клинади охрги етап бу
-                    time_for_verificy_code TIMESTAMP, --верификация коди бориб тушканда койладган вохт
-                    carid BIGINT REFERENCES cars(carid)
-                )
-            """)
-            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS cars (
                     carid BIGSERIAL PRIMARY KEY,
                     carname TEXT,
@@ -58,6 +35,31 @@ async def init_db(pool):
                     olindi TIMESTAMP,
                     price INTEGER,
                     kelishi_kerak TIMESTAMP
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    userid SERIAL PRIMARY KEY,
+                    name TEXT,
+                    surname TEXT,
+                    patronymic TEXT,
+                    username TEXT UNIQUE,
+                    password TEXT,
+                    gmail TEXT UNIQUE,
+                    passportid TEXT UNIQUE,
+                    number INTEGER,
+                    age INTEGER,
+                    photo BYTEA,
+                    token TEXT UNIQUE, --REFRESH TOKEN
+                    gmailcode TEXT,
+                    countdaily INTEGER DEFAULT 0,
+                    time TIMESTAMP, --кунли лимитти бошкаришчун регистрация ёки логинда
+                    statuscode BOOLEAN DEFAULT FALSE, --бу код боргандан кейн почтани тасдиклаган ёки еклиги
+                    account_status BOOLEAN DEFAULT FALSE, --аккаунти gmail код тасдиклагандан кейин актив клинади охрги етап бу
+                    time_for_verificy_code TIMESTAMP, --верификация коди бориб тушканда койладган вохт
+                    banned BOOLEAN DEFAULT FALSE, --бу мошина брон кб кемаса бан клнади passporid блан
+                    bantime TIMESTAMP,
+                    carid BIGINT REFERENCES cars(carid)
                 )
             """)
             await conn.execute("""
