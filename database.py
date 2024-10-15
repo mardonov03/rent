@@ -30,6 +30,7 @@ async def init_db(pool):
                     year INTEGER,
                     color TEXT,
                     number TEXT UNIQUE,
+                    photo_car BYTEA,
                     status_bron BOOLEAN DEFAULT FALSE, -- Хози брон кб койлган ёки ек
                     status_taken BOOLEAN DEFAULT FALSE, -- Хози рентга берворилган ёки ек
                     olindi TIMESTAMP,

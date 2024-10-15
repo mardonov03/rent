@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Path, Depends, HTTPException, status
-from pydantic import BaseModel, constr, EmailStr
+from pydantic import BaseModel, constr, EmailStr,conint
 from typing import Annotated, Optional
 import logging
 from database import create_pool, init_db
@@ -39,6 +39,13 @@ class UserCreate(BaseModel):
     password: constr(min_length=8)
     gmail: EmailStr
 
+class UserCreate_step2(BaseModel):
+    name: constr(min_length=1)
+    surname: constr(min_length=1)
+    patronymic: constr(min_length=1)
+    age: conint(ge=1)
+    passportid: constr(min_length=8)
+
 class AdminCreate(BaseModel):
     userid: Optional[int] = None
     username: constr(min_length=1)
@@ -66,6 +73,14 @@ class AddCar(BaseModel):
 class ForverifyGmail(BaseModel):
     code: constr(min_length=6)
 
+class ForEditUser(BaseModel):
+    username: constr(min_length=1)
+    password: constr(min_length=8)
+    name: constr(min_length=1)
+    surname: constr(min_length=1)
+    patronymic: constr(min_length=1)
+    age: conint(ge=1)
+
 @app.on_event('startup')
 async def eventstart():
     try:
@@ -86,10 +101,7 @@ async def shutdownevent():
 
 @app.get('/')
 async def main():
-    pool = await create_pool()
-    async with pool.acquire() as conn:
-        await conn.execute('INSERT INTO cars (carname,year,color, number) VALUES ($1,$2,$3,$4)', 'nexia',2014,'black','sadw32413')
-        return 'hellow'
+    return 'hellow'
 
 
 async def create_jwt_token(username: str):
@@ -241,7 +253,6 @@ async def verify_gmail(gmail: str, ver: ForverifyGmail):
         raise HTTPException(status_code=500, detail='Ошибка при проверке кода.')
 
 
-
 @app.post('/login')
 async def handle_login(user: UserLogin):
     pool = await create_pool()
@@ -318,7 +329,6 @@ async def read_profile(username: str, current_user: dict = Depends(get_current_u
 
             if not user_data:
                 raise HTTPException(status_code=404, detail="Пользователь не найден")
-            logger.info(f'current user: {current_user['sub']}')
             if current_user is None or user_data['username'] != current_user['sub']:
                 return {
                     "message": "Это профиль другого пользователя",
@@ -342,6 +352,66 @@ async def read_profile(username: str, current_user: dict = Depends(get_current_u
 
     except Exception as e:
         logger.error(f'error424643265747: {e}')
+        raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
+
+@app.get('/profile/{username}/edit')
+async def get_profile_for_edit(username: str, current_user: dict = Depends(get_current_user)):
+    pool = await create_pool()
+    try:
+        async with pool.acquire() as conn:
+            user_data = await conn.fetchrow('SELECT username, password, name, surname, patronymic, age FROM users WHERE username = $1', username)
+
+            if not user_data:
+                raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+            if current_user is None or user_data['username'] != current_user['sub']:
+                raise HTTPException(status_code=403, detail="У вас нет прав редактировать этот профиль")
+
+            return {
+                "profile": {
+                    "username": user_data['username'],
+                    "password": user_data['password'],
+                    "name": user_data['name'],
+                    "surname": user_data['surname'],
+                    "patronymic": user_data['patronymic'],
+                    "age": user_data['age']
+                }
+            }
+
+    except HTTPException as http_err:
+        raise http_err
+    except Exception as e:
+        logger.error(f'error_reading_profile_for_edit: {e}')
+        raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
+
+@app.put('/profile/{username}/edit')
+async def edit_profile(user: ForEditUser, token: dict = Depends(get_current_user)):
+    pool = await create_pool()
+    try:
+        if token is None:
+            raise HTTPException(status_code=401, detail='Необходимо войти в аккаунт для редактирования профиля')
+
+        async with pool.acquire() as conn:
+            user_info = await conn.fetchrow('SELECT * FROM users WHERE gmail = $1', token['sub'])
+            username_count = await conn.fetchval('SELECT COUNT(*) FROM users WHERE username = $1', user.username)
+            if not user_info:
+                raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+            if user_info['gmail'] != token['sub']:
+                raise HTTPException(status_code=403, detail="У вас нет прав редактировать этот профиль")
+
+            if username_count > 0:
+                raise HTTPException(status_code=400, detail="Пользователь с таким username уже существует")
+
+            await conn.execute('UPDATE users SET username=$1, password = $2, name = $3, surname=$4, patronymic = $5, age =$6, WHERE gmail=$7',user.username,user.password,user.name,user.surname,user.patronymic,user.age,token['sub'])
+
+            logger.info(f"Пользователь {user_info['gmail']} обновил профиль")
+
+            return {"message": "Профиль успешно обновлен"}
+    except HTTPException as ht:
+        raise ht
+    except Exception as e:
+        logger.error(f'error324468385: {e}')
 
 @app.get('/cars')
 async def handle_cars():
@@ -352,7 +422,7 @@ async def handle_cars():
             return cars
     except Exception as e:
         logger.error(f'error4363423: {e}')
-
+        raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
 
 @app.get('/car/{id}')
 async def handle_car(id:int):
@@ -364,7 +434,7 @@ async def handle_car(id:int):
                 return car
     except Exception as e:
         logger.error(f'error342453: {e}')
-
+        raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
 
 @app.post('/reserve/{carid}')
 async def reserve(carid: int, token: dict = Depends(get_current_user)):
@@ -382,6 +452,9 @@ async def reserve(carid: int, token: dict = Depends(get_current_user)):
                 raise HTTPException(status_code=400, detail=f'Эта машина уже забронирована или взята')
 
             user = await conn.fetchrow('SELECT userid, gmail, banned, bantime, carid, passportid FROM users WHERE username = $1', username)
+            if user['passportid'] is None:
+                raise HTTPException(status_code=403, detail=f'Прежде чем забронировать машину вам нужно заполнить анкету.')
+
             if user['banned']:
                 bantime = user['bantime'] + timedelta(days=10) if user['bantime'] else None
                 raise HTTPException(status_code=403, detail=f'Вы сможете забронировать машину только после: {bantime}')
@@ -400,3 +473,31 @@ async def reserve(carid: int, token: dict = Depends(get_current_user)):
     except Exception as e:
         logger.error(f'Произошла ошибка: {e}')
         raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
+
+@app.post('/register_step2')
+async def register_step2(user: UserCreate_step2, tokenuser: dict = Depends(get_current_user)):
+    pool = await create_pool()
+    try:
+        if tokenuser is None:
+            raise HTTPException(status_code=401,detail='Прежде чем забронировать машину, вам нужно зайти в свой аккаунт')
+        async with pool.acquire() as conn:
+            res = await conn.fetchval('SELECT gmail FROM users WHERE passportid= $1',user.passportid)
+            if res:
+                if res['gmail'] == tokenuser['sub']:
+                    raise HTTPException(status_code=409, detail='Вы уже зарегистрированы.')
+                else:
+                    raise HTTPException(status_code=409, detail='Этот человек уже зарегистрирован.')
+            else:
+                await conn.execute('UPDATE users SET name = $1, surname = $2, patronymic = $3, age = $4, passportid = $5 WHERE gmail = $6',user.name, user.surname,user.patronymic, user.age, user.passportid, res['gmail'])
+                return {"message": "Пользоваткль успешно зарегестрирован"}
+    except HTTPException as http_err:
+        raise http_err
+    except Exception as e:
+        logger.error(f'error4367894: {e}')
+        raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
+
+
+
+
+
+#profile дган пейжжиям тоглашм кере охргача то есть агар озни профили боса едит клшга рухсат бериш.
