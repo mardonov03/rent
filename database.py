@@ -54,7 +54,7 @@ async def init_db(pool):
                     token TEXT UNIQUE, --REFRESH TOKEN
                     gmailcode TEXT,
                     countdaily INTEGER DEFAULT 0,
-                    time TIMESTAMP, --кунли лимитти бошкаришчун регистрация ёки логинда
+                    time TIMESTAMP DEFAULT now(), --кунли лимитти бошкаришчун регистрация ёки логинда
                     statuscode BOOLEAN DEFAULT FALSE, --бу код боргандан кейн почтани тасдиклаган ёки еклиги
                     account_status BOOLEAN DEFAULT FALSE, --аккаунти gmail код тасдиклагандан кейин актив клинади охрги етап бу
                     time_for_verificy_code TIMESTAMP, --верификация коди бориб тушканда койладган вохт
@@ -68,14 +68,12 @@ async def init_db(pool):
                     userid SERIAL PRIMARY KEY,
                     name TEXT,
                     surname TEXT,
-                    patronymic TEXT,
                     username TEXT UNIQUE,
                     password TEXT,
-                    gmail TEXT,
                     passportid INTEGER UNIQUE,
-                    age INTEGER,
-                    photo BYTEA,
-                    role TEXT
+                    role TEXT,
+                    countdaily INTEGER DEFAULT 0,
+                    time TIMESTAMP DEFAULT now()
                 )
             """)
     except Exception as e:
