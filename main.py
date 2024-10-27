@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Path, Depends, HTTPException, status
+from fastapi import FastAPI, Path, Depends, HTTPException, status, Request, Response
 from pydantic import BaseModel, constr, EmailStr,conint
 from typing import Annotated, Optional
 import logging
@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 import jwt
 from fastapi.security import OAuth2PasswordBearer
 import bcrypt
-from fastapi import FastAPI
 import uuid
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 
@@ -24,8 +23,8 @@ SECRET_KEY_REFRESH= 'NYBNubuhni97HUJImj214mij#@!__+=24vs234{wafdawfaf[awfawgy6r2
 
 ALGORITHM = "HS256"
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 3
+ACCESS_TOKEN_EXPIRE_MINUTES = 1 #30
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 ADMIN_MINUTES = 10
 conf = ConnectionConfig(
     MAIL_USERNAME="komronmardonov233@gmail.com",
@@ -173,7 +172,6 @@ async def get_current_user_gmail(token: Optional[str] = Depends(oauth2_scheme)):
     if token is None:
         return None
     payload = await decode_jwt_token_gmail(token)
-    logger.info(f'payload: {payload}')
     return payload
 
 async def get_current_admin(token: Optional[str] = Depends(oauth2_scheme)):
@@ -205,7 +203,7 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
 
             elif user_gmail and user_gmail['account_status'] == False and user_gmail['statuscode'] == False:
                 raise HTTPException(status_code=403,detail='этот аккаунт на этапе регистрации перенаправляем в verificy')
-            logger.info(f'tokenuser: {tokenuser}')
+
             if user_gmail and user_gmail['statuscode'] == True and tokenuser is None:
                 raise HTTPException(status_code=400, detail='Пожалуйста завершите настройку с того устройства, с которого подтвердили почту.')
 
@@ -217,7 +215,7 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
                     token_refresh = await create_refresh_token(user.username)
                     await conn.execute('UPDATE users SET username= $1, password= $2, token = $3, account_status = TRUE,gmailcode= null,countdaily =0 WHERE gmail = $4',user.username, hashed_password.decode('utf-8'), token_refresh.decode('utf-8'), user.gmail)
                     token = await create_jwt_token(user.username)
-                    return {'token_access': token, 'token_refresh': token_refresh}
+                    return {'token_access': token, 'refresh_token': token_refresh}
             else:
                 await gmailcode(user.gmail)
     except HTTPException as http_err:
@@ -290,7 +288,7 @@ async def verify_gmail(gmail: str, ver: ForverifyGmail):
 
 
 @app.post('/login',status_code=status.HTTP_201_CREATED)
-async def handle_login(user: UserLogin):
+async def handle_login(user: UserLogin, response: Response, request: Request):
     pool = await create_pool()
     try:
         async with pool.acquire() as conn:
@@ -322,7 +320,17 @@ async def handle_login(user: UserLogin):
                     token_refresh = await create_refresh_token(user.username)
                     await conn.execute('UPDATE users SET token=$1 WHERE userid=$2', token_refresh.decode('utf-8'), userid)
                     token = await create_jwt_token(user.username)
-                    return {'token_access': token, 'token_refresh': token_refresh}
+
+                    response.set_cookie(
+                        key="refresh_token",
+                        value=token_refresh.decode('utf-8'),
+                        httponly=True,
+                        max_age=7*24*60*60,
+                        secure=True,
+                        samesite="Strict"
+                    )
+
+                    return {'token_access': token, 'refresh_token': token_refresh}
                 else:
                     await conn.execute('UPDATE users SET countdaily = countdaily + 1, time = $2 WHERE userid = $1',userid,datetime.now())
                     raise HTTPException(status_code=401, detail='Неверный пароль')
@@ -334,7 +342,7 @@ async def handle_login(user: UserLogin):
         raise HTTPException(status_code=500, detail='Ошибка при входе')
 
 @app.get('/profile/{username}')
-async def read_profile(username: str, current_user: dict = Depends(get_current_user)):
+async def read_profile(request: Request, username: str, current_user: dict = Depends(get_current_user)):
     pool = await create_pool()
     try:
         async with pool.acquire() as conn:
@@ -342,7 +350,11 @@ async def read_profile(username: str, current_user: dict = Depends(get_current_u
 
             if not user_data:
                 raise HTTPException(status_code=404, detail="Пользователь не найден")
-            if current_user is None or user_data['username'] != current_user['sub']:
+
+            if current_user is None or 'sub' not in current_user:
+                current_user = await refresh_access_token(request,username)
+
+            if current_user is None or 'sub' not in current_user or user_data['username'] != current_user['sub']:
                 return {
                     "message": "Это профиль другого пользователя",
                     "profile": {
@@ -377,6 +389,29 @@ async def read_profile(username: str, current_user: dict = Depends(get_current_u
     except Exception as e:
         logger.error(f'error424643265747: {e}')
         raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
+
+
+async def refresh_access_token(request: Request, username):
+    pool = await create_pool()
+    try:
+        async with pool.acquire() as conn:
+            user_brow_refresh = request.cookies.get('refresh_token')
+
+            if user_brow_refresh is None:
+                raise HTTPException(status_code=400, detail="Токен не найден")
+
+            db_refresh = await conn.fetchrow('SELECT token FROM users WHERE username =$1 ',username)
+            db_refresh = db_refresh[0] if db_refresh else None
+
+            if db_refresh is None:
+                raise HTTPException(status_code=401, detail="Недействительный токен")
+            if db_refresh == user_brow_refresh:
+                token = await create_jwt_token(username)
+                return {'token_access': token}
+            else:
+                return None
+    except Exception as e:
+        logger.error(f'error89736278980: {e}')
 
 @app.get('/profile/{username}/edit')
 async def get_profile_for_edit(username: str, current_user: dict = Depends(get_current_user)):
@@ -611,7 +646,6 @@ async def admin_panel_row(tablename: str, id: int, token: dict = Depends(get_cur
         raise HTTPException(status_code=500, detail='Ошибка при получении данных')
 
 
-
 @app.post('/admin/{tablename}', status_code=status.HTTP_201_CREATED)
 async def admin_post(tablename: str, data: dict, token: dict = Depends(get_current_admin)):
     pool = await create_pool()
@@ -631,6 +665,7 @@ async def admin_post(tablename: str, data: dict, token: dict = Depends(get_curre
     except Exception as e:
         logger.error(f'error0864673: {e}')
         raise HTTPException(status_code=500, detail='Ошибка при добавлении данных')
+
 
 @app.put('/admin/{tablename}/{id}')
 async def admin_update(tablename: str, id: int, data: dict, token: dict = Depends(get_current_admin)):
