@@ -1,42 +1,64 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
-from pydantic import BaseModel
-from fastapi_admin.resources import Field, Model
-from fastapi_admin.widgets import displays, inputs
+from sqlalchemy import Column, Integer, String, ForeignKey, Text, Boolean, TIMESTAMP, LargeBinary
 
-# SQLAlchemy models
-class User(BaseModel):
+from sqlalchemy.orm import relationship
+from sqlalchemy.ext.declarative import declarative_base
+
+Base = declarative_base()
+
+class Car(Base):
+    __tablename__ = 'cars'
+    carid = Column(Integer, primary_key=True, index=True)
+    carname = Column(Text)
+    year = Column(Integer)
+    color = Column(Text)
+    number = Column(Text, unique=True)
+    photo_car = Column(LargeBinary)
+    status_bron = Column(Boolean, default=False)
+    status_taken = Column(Boolean, default=False)
+    olindi = Column(TIMESTAMP)
+    price = Column(Integer)
+    kelishi_kerak = Column(TIMESTAMP)
+    users = relationship("User", back_populates="car")
+
+
+class User(Base):
     __tablename__ = 'users'
 
     userid = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    gmail = Column(String, unique=True, index=True)
-    password = Column(String)
+    name = Column(Text)
+    surname = Column(Text)
+    patronymic = Column(Text)
+    username = Column(Text, unique=True, index=True)
+    password = Column(Text)
+    gmail = Column(Text, unique=True, index=True)
+    passportid = Column(Text, unique=True)
+    number = Column(Integer)
+    age = Column(Integer)
+    photo = Column(LargeBinary)
+    token = Column(Text, unique=True)
+    gmailcode = Column(Text)
+    countdaily = Column(Integer, default=0)
+    time = Column(TIMESTAMP)
+    statuscode = Column(Boolean, default=False)
+    account_status = Column(Boolean, default=False)
+    time_for_verificy_code = Column(TIMESTAMP)
+    banned = Column(Boolean, default=False)
+    bantime = Column(TIMESTAMP)
     carid = Column(Integer, ForeignKey('cars.carid'))
+    car = relationship("Car", back_populates="users")
 
 
-class Admin(BaseModel):
+class AdminDb(Base):
     __tablename__ = 'admins'
 
     userid = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    gmail = Column(String, unique=True, index=True)
-    password = Column(String)
-    role = Column(String)
-
-
-# FastAPI Admin Model for User
-class UserAdmin(Model):
-    fields = [
-        Field("userid", label="ID", display=displays.InputOnly(), input_=inputs.DisplayOnly()),
-        Field("username", label="Username", display=displays.InputOnly(), input_=inputs.Text()),
-        Field("gmail", label="Gmail", display=displays.InputOnly(), input_=inputs.Email()),
-    ]
-
-
-# FastAPI Admin Model for Admin
-class AdminAdmin(Model):
-    fields = [
-        Field("userid", label="ID", display=displays.InputOnly(), input_=inputs.DisplayOnly()),
-        Field("username", label="Username", display=displays.InputOnly(), input_=inputs.Text()),
-        Field("gmail", label="Gmail", display=displays.InputOnly(), input_=inputs.Email()),
-    ]
+    name = Column(Text)
+    surname = Column(Text)
+    patronymic = Column(Text)
+    username = Column(Text, unique=True, index=True)
+    password = Column(Text)
+    gmail = Column(Text)
+    passportid = Column(Integer, unique=True)
+    age = Column(Integer)
+    photo = Column(LargeBinary)
+    role = Column(Text)

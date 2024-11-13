@@ -1,3 +1,5 @@
+import asyncio
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Path, Depends, HTTPException, status, Request, Response
 from pydantic import BaseModel, constr, EmailStr,conint
 from typing import Annotated, Optional
@@ -9,6 +11,10 @@ from fastapi.security import OAuth2PasswordBearer
 import bcrypt
 import uuid
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from fastapi import HTTPException, Depends, File, UploadFile, status
+import asyncpg
+from io import BytesIO
+from PIL import Image
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -19,24 +25,28 @@ app = FastAPI()
 SECRET_KEY = "bgsubU_fgesgnjGREJ75428953nYBNybrg984'_2467%4#25bseaw043ithj++@vsdv,es"
 SECRET_KEY_ADMIN = 'UHWEYGNO47GHB2kjnvuysrhbrur8ng#$2a@ac@_vim-awfdfwad$wascdvseqq34))9Q'
 SECRET_KEY_GMAIL= 'einfiueaubdwa8bf8ybawbd87483ghgiaejw/-egw-3-aeHFbw@j39qH90Jf=ddfbe3!!'
-SECRET_KEY_REFRESH= 'NYBNubuhni97HUJImj214mij#@!__+=24vs234{wafdawfaf[awfawgy6r25bvunjsme89j4n'
 
 ALGORITHM = "HS256"
 
-ACCESS_TOKEN_EXPIRE_MINUTES = 1 #30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 #30
 ADMIN_MINUTES = 10
 conf = ConnectionConfig(
-    MAIL_USERNAME="komronmardonov233@gmail.com",
-    MAIL_PASSWORD="aolg nxpr ztyp sohs",
-    MAIL_FROM="komronmardonov233@gmail.com",
+    MAIL_USERNAME="kamronmardonov233@gmail.com",
+    MAIL_PASSWORD="zbkv xlfk qnle xilt",
+    MAIL_FROM="kamronmardonov233@gmail.com",
     MAIL_PORT=587,
     MAIL_SERVER="smtp.gmail.com",
     MAIL_STARTTLS=True,
     MAIL_SSL_TLS=False,
     USE_CREDENTIALS=True,
 )
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Замените "*" на точный URL фронтенда в продакшене
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 class UserCreate(BaseModel):
     username: constr(min_length=1)
     password: constr(min_length=8)
@@ -107,7 +117,13 @@ async def shutdownevent():
 
 @app.get('/')
 async def main():
-    return 'hellow'
+    pool = await create_pool()
+    try:
+        async with pool.acquire() as conn:
+            cars = await conn.fetch('SELECT * FROM cars WHERE status_bron=False AND status_taken =False')
+            return cars
+    except Exception as e:
+        logger.error(f'error43563: {e}')
 
 
 async def create_jwt_token(username: str):
@@ -122,17 +138,6 @@ async def decode_jwt_token(token: str):
     except jwt.PyJWTError:
         return None
 
-async def create_refresh_token(username: str):
-    expiration = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    token = jwt.encode({"sub": username, "exp": expiration}, SECRET_KEY_REFRESH, algorithm=ALGORITHM)
-    return token
-
-async def decode_refresh_token(token: str):
-    try:
-        payload = jwt.decode(token, SECRET_KEY_REFRESH, algorithms=[ALGORITHM])
-        return payload
-    except jwt.PyJWTError:
-        return None
 
 async def create_jwt_token_admin(username: str):
     expiration = datetime.utcnow() + timedelta(minutes=ADMIN_MINUTES)
@@ -148,7 +153,7 @@ async def decode_jwt_token_admin(token: str):
 
 
 async def create_jwt_token_gmail(username: str):
-    expiration = datetime.utcnow() + timedelta(minutes=10)
+    expiration = datetime.utcnow() + timedelta(minutes=15)
     token = jwt.encode({"sub": username, "exp": expiration}, SECRET_KEY_GMAIL, algorithm=ALGORITHM)
     return token
 
@@ -180,12 +185,6 @@ async def get_current_admin(token: Optional[str] = Depends(oauth2_scheme)):
     payload = await decode_jwt_token_admin(token)
     return payload
 
-async def get_current_refresh(token: Optional[str] = Depends(oauth2_scheme)):
-    if token is None:
-        return None
-    payload = await decode_refresh_token(token)
-    return payload
-
 @app.post('/register', status_code=status.HTTP_201_CREATED)
 async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_user_gmail)):
     pool = await create_pool()
@@ -212,12 +211,12 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
                     raise HTTPException(status_code=400, detail='Пожалуйста завершите настройку с подтвержденным gmail')
                 elif user_gmail and user_gmail['statuscode'] == True and tokenuser.get('sub') == user.gmail:
                     hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt(rounds=12))
-                    token_refresh = await create_refresh_token(user.username)
-                    await conn.execute('UPDATE users SET username= $1, password= $2, token = $3, account_status = TRUE,gmailcode= null,countdaily =0 WHERE gmail = $4',user.username, hashed_password.decode('utf-8'), token_refresh.decode('utf-8'), user.gmail)
+                    await conn.execute('UPDATE users SET username= $1, password= $2, account_status = TRUE,gmailcode= null,countdaily =0 WHERE gmail = $3',user.username, hashed_password.decode('utf-8'), user.gmail)
                     token = await create_jwt_token(user.username)
-                    return {'token_access': token, 'refresh_token': token_refresh}
+                    return {'token_access': token}
             else:
-                await gmailcode(user.gmail)
+                gmail = await gmailcode(user.gmail)
+                return f'Код подтверждения отправлен на: {gmail}'
     except HTTPException as http_err:
         raise http_err
 
@@ -267,7 +266,7 @@ async def verify_gmail(gmail: str, ver: ForverifyGmail):
             if status['countdaily'] >= 3:
                 raise HTTPException(status_code=400, detail='Вы достигли своего лимита.')
 
-            if status['time_for_verificy_code'] < datetime.now() - timedelta(minutes=3):
+            if status['time_for_verificy_code'] < datetime.now() - timedelta(minutes=15):
                 await conn.execute('DELETE FROM users WHERE gmail = $1', gmail)
                 raise HTTPException(status_code=402, detail='Срок действия кода истек')
 
@@ -288,12 +287,16 @@ async def verify_gmail(gmail: str, ver: ForverifyGmail):
 
 
 @app.post('/login',status_code=status.HTTP_201_CREATED)
-async def handle_login(user: UserLogin, response: Response, request: Request):
+async def handle_login(user: UserLogin, response: Response):
+    await asyncio.sleep(1)
     pool = await create_pool()
     try:
         async with pool.acquire() as conn:
             if not (user.username or user.gmail):
                 raise HTTPException(status_code=400, detail='Необходимо указать имя пользователя или адрес электронной почты')
+
+            if not (user.username or user.gmail):
+                raise HTTPException(status_code=400, detail="Укажите имя пользователя или email")
 
             if user.username:
                 stored_password = await conn.fetchval('SELECT password FROM users WHERE username = $1', user.username)
@@ -317,23 +320,12 @@ async def handle_login(user: UserLogin, response: Response, request: Request):
 
             if stored_password:
                 if bcrypt.checkpw(user.password.encode('utf-8'), stored_password.encode('utf-8')):
-                    token_refresh = await create_refresh_token(user.username)
-                    await conn.execute('UPDATE users SET token=$1 WHERE userid=$2', token_refresh.decode('utf-8'), userid)
                     token = await create_jwt_token(user.username)
 
-                    response.set_cookie(
-                        key="refresh_token",
-                        value=token_refresh.decode('utf-8'),
-                        httponly=True,
-                        max_age=7*24*60*60,
-                        secure=True,
-                        samesite="Strict"
-                    )
-
-                    return {'token_access': token, 'refresh_token': token_refresh}
+                    return {'token_access': token}
                 else:
                     await conn.execute('UPDATE users SET countdaily = countdaily + 1, time = $2 WHERE userid = $1',userid,datetime.now())
-                    raise HTTPException(status_code=401, detail='Неверный пароль')
+                    raise HTTPException(status_code=401, detail='Неверный пароль или имя пользователья')
     except HTTPException as http_err:
         raise http_err
 
@@ -350,9 +342,6 @@ async def read_profile(request: Request, username: str, current_user: dict = Dep
 
             if not user_data:
                 raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-            if current_user is None or 'sub' not in current_user:
-                current_user = await refresh_access_token(request,username)
 
             if current_user is None or 'sub' not in current_user or user_data['username'] != current_user['sub']:
                 return {
@@ -390,28 +379,6 @@ async def read_profile(request: Request, username: str, current_user: dict = Dep
         logger.error(f'error424643265747: {e}')
         raise HTTPException(status_code=500, detail='Внутренняя ошибка сервера')
 
-
-async def refresh_access_token(request: Request, username):
-    pool = await create_pool()
-    try:
-        async with pool.acquire() as conn:
-            user_brow_refresh = request.cookies.get('refresh_token')
-
-            if user_brow_refresh is None:
-                raise HTTPException(status_code=400, detail="Токен не найден")
-
-            db_refresh = await conn.fetchrow('SELECT token FROM users WHERE username =$1 ',username)
-            db_refresh = db_refresh[0] if db_refresh else None
-
-            if db_refresh is None:
-                raise HTTPException(status_code=401, detail="Недействительный токен")
-            if db_refresh == user_brow_refresh:
-                token = await create_jwt_token(username)
-                return {'token_access': token}
-            else:
-                return None
-    except Exception as e:
-        logger.error(f'error89736278980: {e}')
 
 @app.get('/profile/{username}/edit')
 async def get_profile_for_edit(username: str, current_user: dict = Depends(get_current_user)):
@@ -647,21 +614,40 @@ async def admin_panel_row(tablename: str, id: int, token: dict = Depends(get_cur
 
 
 @app.post('/admin/{tablename}', status_code=status.HTTP_201_CREATED)
-async def admin_post(tablename: str, data: dict, token: dict = Depends(get_current_admin)):
+async def admin_post(tablename: str, data: dict, token: dict = Depends(get_current_admin),
+                     photo: UploadFile = File(None)):
     pool = await create_pool()
+
     try:
+        # Проверка прав администратора
         async with pool.acquire() as conn:
             isadmin = await conn.fetchval('SELECT username FROM admins WHERE username = $1', token['sub'])
             if not isadmin:
                 raise HTTPException(status_code=401, detail="Нет прав доступа")
 
+            # Преобразование данных в строку для запроса
             columns = ', '.join(data.keys())
-            values = ', '.join([f"${i+1}" for i in range(len(data))])
+            values = ', '.join([f"${i + 1}" for i in range(len(data))])
+
+            # Если фото присутствует, обрабатываем его
+            photo_data = None
+            if photo:
+                # Чтение и обработка изображения
+                image = Image.open(photo.file)
+                with BytesIO() as byte_io:
+                    image.save(byte_io, format="PNG")  # Можно использовать любой формат
+                    photo_data = byte_io.getvalue()
 
             query = f"INSERT INTO {tablename} ({columns}) VALUES ({values})"
+
+            if photo_data:
+                data['photo_car'] = photo_data
+
+            # Выполнение запроса
             await conn.execute(query, *data.values())
 
             return {"detail": "Record inserted successfully"}
+
     except Exception as e:
         logger.error(f'error0864673: {e}')
         raise HTTPException(status_code=500, detail='Ошибка при добавлении данных')

@@ -60,6 +60,7 @@ async def init_db(pool):
                     time_for_verificy_code TIMESTAMP, --верификация коди бориб тушканда койладган вохт
                     banned BOOLEAN DEFAULT FALSE, --бу мошина брон кб кемаса бан клнади passporid блан
                     bantime TIMESTAMP,
+                    captcha_count INTEGER DEFAULT 0,
                     carid BIGINT REFERENCES cars(carid)
                 )
             """)
