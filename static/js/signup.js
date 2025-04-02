@@ -54,11 +54,29 @@ async function completeRegistration() {
 
     if (response.ok) {
         const data = await response.json();
-        const token = data.token_access;
+        const newToken = data.token_access;
 
-        localStorage.setItem("token", token);
-        window.location.href = `/profile/${username}`;
+        localStorage.setItem("token_access", newToken);
+
+        await goToProfile(username);
     } else {
         alert("Ошибка завершения регистрации");
+    }
+}
+
+async function goToProfile(username) {
+    const token_access = localStorage.getItem("token_access");
+
+    const response = await fetch(`/profile/${username}`, {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${token_access}`
+        }
+    });
+
+    if (response.ok) {
+        window.location.href = `/profile/${username}?token_access=${token_access}`;
+    } else {
+        alert("Ошибка загрузки профиля");
     }
 }

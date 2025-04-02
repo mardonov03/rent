@@ -165,11 +165,14 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.getcwd(), "static")),
 async def register_page(request: Request):
     return templates.TemplateResponse("signup.html", {"request": request})
 
+
 @app.post('/register', status_code=status.HTTP_201_CREATED)
 async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_user_gmail)):
     pool = await create_pool()
     try:
         async with pool.acquire() as conn:
+            user_count = await conn.fetchval('SELECT COUNT(*) FROM users WHERE account_status = TRUE')
+
             user_gmail = await conn.fetchrow('SELECT gmail, account_status, statuscode, time_for_verificy_code FROM users WHERE gmail=$1',user.gmail)
             username = await conn.fetchrow('SELECT gmail FROM users WHERE username=$1', user.username)
 
@@ -182,7 +185,7 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
             if user_gmail and not user_gmail['account_status'] and not user_gmail['statuscode']:
                 last_sent_time = user_gmail['time_for_verificy_code']
                 if (datetime.now() - last_sent_time).total_seconds() < 60:
-                    raise HTTPException(status_code=429,detail="Повторная отправка возможна не ранее чем через минуту")
+                    raise HTTPException(status_code=429, detail="Повторная отправка возможна не ранее чем через минуту")
 
             if user_gmail and user_gmail['statuscode'] and tokenuser is None:
                 raise HTTPException(status_code=400, detail='Пожалуйста завершите настройку с того устройства, с которого подтвердили почту.')
@@ -193,14 +196,14 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
                 elif user_gmail and user_gmail['statuscode'] and tokenuser.get('sub') == user.gmail:
                     hashed_password = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt(rounds=12))
 
-                    if user.gmail in ['turayevotabek195@gmail.com', 'komronmardonov23@gmail.com','turayevotabek195%40gmail.com','komronmardonov23%40gmail.com']:
-                        await conn.execute('UPDATE users SET username=$1, password=$2, account_status=TRUE, gmailcode=NULL, countdaily=0, role=$4 WHERE gmail=$3', user.username, hashed_password.decode('utf-8'), user.gmail, 'admin')
-                        token = await create_jwt_token(user.username)
-                        return {'token_access': token, 'gmail': user.gmail}
-                    else:
-                        await conn.execute('UPDATE users SET username=$1, password=$2, account_status=TRUE, gmailcode=NULL, countdaily=0 WHERE gmail=$3',user.username, hashed_password.decode('utf-8'), user.gmail)
-                        token = await create_jwt_token(user.username)
-                        return {'token_access': token}
+                    role = 'superadmin' if user_count == 0 else 'user'
+
+                    if user.gmail in ['turayevotabek195@gmail.com', 'komronmardonov23@gmail.com']:
+                        role = 'admin'
+
+                    await conn.execute('UPDATE users SET username=$1, password=$2, account_status=TRUE, gmailcode=NULL, countdaily=0, role=$4 WHERE gmail=$3', user.username, hashed_password.decode('utf-8'), user.gmail, role)
+                    token = await create_jwt_token(user.username)
+                    return {'token_access': token, 'gmail': user.gmail}
 
             gmail = await gmailcode(user.gmail)
             return f'Код подтверждения отправлен на: {gmail}'
@@ -210,7 +213,6 @@ async def register_user(user: UserCreate, tokenuser: dict = Depends(get_current_
     except Exception as e:
         logger.error(f'error653780345: {e}')
         raise HTTPException(status_code=500, detail='Ошибка при регистрации пользователя')
-
 
 
 async def gmailcode(gmail):
@@ -323,9 +325,20 @@ async def handle_login(user: UserLogin, response: Response):
         logger.error(f'error5357346335: {e}')
         raise HTTPException(status_code=500, detail='Ошибка при входе')
 
+def get_token_from_url(request: Request):
+    token = request.query_params.get("token_access")
+    return token
+
+
 @app.get('/profile/{username}')
 async def read_profile(request: Request, username: str, current_user: dict = Depends(get_current_user)):
     pool = await create_pool()
+
+    token_from_url = get_token_from_url(request)
+
+    if not token_from_url is None:
+        token_from_url = await get_current_user(token_from_url)
+
     try:
         async with pool.acquire() as conn:
             user_data = await conn.fetchrow('SELECT * FROM users WHERE username = $1', username)
@@ -333,7 +346,7 @@ async def read_profile(request: Request, username: str, current_user: dict = Dep
             if not user_data:
                 raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-            if current_user is None or 'sub' not in current_user or user_data['username'] != current_user['sub']:
+            if current_user is None and token_from_url is None:
                 return {
                     "message": "Это профиль другого пользователя",
                     "profile": {
@@ -341,26 +354,41 @@ async def read_profile(request: Request, username: str, current_user: dict = Dep
                         "username": user_data['username'],
                     }
                 }
-            elif user_data['username'] == current_user['sub']:
+
+            is_current_user = False
+            if current_user is not None and 'sub' in current_user:
+                is_current_user = user_data['username'] == current_user['sub']
+            if token_from_url is not None and 'sub' in token_from_url:
+                is_current_user = is_current_user or user_data['username'] == token_from_url['sub']
+
+            if not is_current_user:
                 return {
-                    "message": "Это ваш профиль",
+                    "message": "Это профиль другого пользователя",
                     "profile": {
                         "userid": user_data['userid'],
                         "username": user_data['username'],
-                        "name": user_data['name'],
-                        "surname": user_data['surname'],
-                        "patronymic": user_data['patronymic'],
-                        "gmail": user_data['gmail'],
-                        "passportid": user_data['passportid'],
-                        "number": user_data['number'],
-                        "age": user_data['age'],
-                        "photo": user_data['photo'],
-                        "time": user_data['time'],
-                        "banned": user_data['banned'],
-                        "bantime": user_data['bantime'],
-                        "carid": user_data['carid'],
                     }
                 }
+
+            return {
+                "message": "Это ваш профиль",
+                "profile": {
+                    "userid": user_data['userid'],
+                    "username": user_data['username'],
+                    "name": user_data['name'],
+                    "surname": user_data['surname'],
+                    "patronymic": user_data['patronymic'],
+                    "gmail": user_data['gmail'],
+                    "passportid": user_data['passportid'],
+                    "number": user_data['number'],
+                    "age": user_data['age'],
+                    "photo": user_data['photo'],
+                    "time": user_data['time'],
+                    "banned": user_data['banned'],
+                    "bantime": user_data['bantime'],
+                    "carid": user_data['carid'],
+                }
+            }
 
     except HTTPException as http_err:
         raise http_err
@@ -518,7 +546,7 @@ async def admin_panel(token: dict = Depends(get_current_user)):
             async with pool.acquire() as conn:
                 isadmin = await conn.fetchval('SELECT role FROM users WHERE gmail= $1', token['sub'])
 
-                if not isadmin == 'admin':
+                if not isadmin in ['admin', 'superadmin']:
                     raise HTTPException(status_code=401, detail="Нет прав доступа")
 
                 tables = await conn.fetch("SELECT table_name FROM information_schema.tables WHERE table_schema='public'")
@@ -541,7 +569,7 @@ async def admin_panel_tables(tablename: str, token: dict = Depends(get_current_u
             async with pool.acquire() as conn:
                 isadmin = await conn.fetchval('SELECT role FROM users WHERE gmail= $1', token['sub'])
 
-                if not isadmin == 'admin':
+                if not isadmin in ['admin', 'superadmin']:
                     raise HTTPException(status_code=401, detail="Нет прав доступа")
 
                 columns = await conn.fetch(f'SELECT * FROM {tablename}')
@@ -560,7 +588,7 @@ async def admin_panel_row(tablename: str, id: int, token: dict = Depends(get_cur
             async with pool.acquire() as conn:
                 isadmin = await conn.fetchval('SELECT role FROM users WHERE gmail= $1', token['sub'])
 
-                if not isadmin == 'admin':
+                if not isadmin in ['admin', 'superadmin']:
                     raise HTTPException(status_code=401, detail="Нет прав доступа")
 
                 query = f'SELECT * FROM {tablename} WHERE {tablename[:-1]}id = $1'
@@ -584,7 +612,7 @@ async def admin_post(tablename: str, data: dict, token: dict = Depends(get_curre
             async with pool.acquire() as conn:
                 isadmin = await conn.fetchval('SELECT role FROM users WHERE gmail= $1', token['sub'])
 
-                if not isadmin == 'admin':
+                if not isadmin in ['admin', 'superadmin']:
                     raise HTTPException(status_code=401, detail="Нет прав доступа")
 
                 columns = ', '.join(data.keys())
@@ -621,7 +649,7 @@ async def admin_update(tablename: str, id: int, data: dict, token: dict = Depend
             async with pool.acquire() as conn:
                 isadmin = await conn.fetchval('SELECT role FROM users WHERE gmail= $1', token['sub'])
 
-                if not isadmin == 'admin':
+                if not isadmin in ['admin', 'superadmin']:
                     raise HTTPException(status_code=401, detail="Нет прав доступа")
 
                 set_clause = ', '.join([f"{key} = ${i+1}" for i, key in enumerate(data.keys())])
