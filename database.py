@@ -61,20 +61,8 @@ async def init_db(pool):
                     banned BOOLEAN DEFAULT FALSE, --бу мошина брон кб кемаса бан клнади passporid блан
                     bantime TIMESTAMP,
                     captcha_count INTEGER DEFAULT 0,
+                    role TEXT DEFAULT 'user',
                     carid BIGINT REFERENCES cars(carid)
-                )
-            """)
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS admins (
-                    userid SERIAL PRIMARY KEY,
-                    name TEXT,
-                    surname TEXT,
-                    username TEXT UNIQUE,
-                    password TEXT,
-                    passportid INTEGER UNIQUE,
-                    role TEXT,
-                    countdaily INTEGER DEFAULT 0,
-                    time TIMESTAMP DEFAULT now()
                 )
             """)
     except Exception as e:
