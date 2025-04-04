@@ -4,21 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Регистрация</title>
+    <link rel="stylesheet" href="/static/css/signup.css">
     <script src="/static/js/signup.js" defer></script>
 </head>
-<body>
-    <div id="register-form">
-        <h2>Регистрация</h2>
-        <input type="text" id="username" placeholder="Имя пользователя" required>
-        <input type="email" id="gmail" placeholder="Email" required>
-        <input type="password" id="password" placeholder="Пароль" required>
-        <button onclick="register()">Sign Up</button>
-    </div>
 
-    <div id="verify-form" style="display:none;">
-        <h2>Введите код подтверждения</h2>
-        <input type="text" id="verification-code" placeholder="Код из почты" required>
-        <button onclick="verify()">ОК</button>
+<body>
+    <div class="center">
+        <div id="register-form">
+            <h2>Регистрация</h2>
+            <input type="text" id="username" placeholder="Имя пользователя" required>
+            <input type="email" id="gmail" placeholder="Email" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <button onclick="register()">Sign Up</button>
+        </div>
+
+        <div id="verify-form" style="display:none;">
+            <h2>Введите код подтверждения</h2>
+            <input type="text" id="verification-code" placeholder="Код из почты" required>
+            <button onclick="verify()">ОК</button>
+        </div>
     </div>
 </body>
+
 </html>
